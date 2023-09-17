@@ -1,3 +1,4 @@
+use half::f16;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::{self, Read, Seek};
@@ -32,6 +33,8 @@ pub enum DecodingResult {
     U32(Vec<u32>),
     /// A vector of 64 bit unsigned ints
     U64(Vec<u64>),
+    /// A vector of 16 bit IEEE floats
+    F16(Vec<f16>),
     /// A vector of 32 bit IEEE floats
     F32(Vec<f32>),
     /// A vector of 64 bit IEEE floats
@@ -76,6 +79,14 @@ impl DecodingResult {
             Err(TiffError::LimitsExceeded)
         } else {
             Ok(DecodingResult::U64(vec![0; size]))
+        }
+    }
+
+    fn new_f16(size: usize, limits: &Limits) -> TiffResult<DecodingResult> {
+        if size > limits.decoding_buffer_size / std::mem::size_of::<f16>() {
+            Err(TiffError::LimitsExceeded)
+        } else {
+            Ok(DecodingResult::F16(vec![f16::from_f32(0.0); size]))
         }
     }
 
@@ -133,6 +144,7 @@ impl DecodingResult {
             DecodingResult::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[start..]),
             DecodingResult::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[start..]),
             DecodingResult::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[start..]),
+            DecodingResult::F16(ref mut buf) => DecodingBuffer::F16(&mut buf[start..]),
             DecodingResult::F32(ref mut buf) => DecodingBuffer::F32(&mut buf[start..]),
             DecodingResult::F64(ref mut buf) => DecodingBuffer::F64(&mut buf[start..]),
             DecodingResult::I8(ref mut buf) => DecodingBuffer::I8(&mut buf[start..]),
@@ -153,6 +165,8 @@ pub enum DecodingBuffer<'a> {
     U32(&'a mut [u32]),
     /// A slice of 64 bit unsigned ints
     U64(&'a mut [u64]),
+    /// A slice of 16 bit IEEE floats
+    F16(&'a mut [f16]),
     /// A slice of 32 bit IEEE floats
     F32(&'a mut [f32]),
     /// A slice of 64 bit IEEE floats
@@ -174,6 +188,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U16(_) => 2,
             DecodingBuffer::U32(_) => 4,
             DecodingBuffer::U64(_) => 8,
+            DecodingBuffer::F16(_) => 2,
             DecodingBuffer::F32(_) => 4,
             DecodingBuffer::F64(_) => 8,
             DecodingBuffer::I8(_) => 1,
@@ -192,6 +207,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(buf),
             DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(buf),
             DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(buf),
+            DecodingBuffer::F16(ref mut buf) => DecodingBuffer::F16(buf),
             DecodingBuffer::F32(ref mut buf) => DecodingBuffer::F32(buf),
             DecodingBuffer::F64(ref mut buf) => DecodingBuffer::F64(buf),
             DecodingBuffer::I8(ref mut buf) => DecodingBuffer::I8(buf),
@@ -210,6 +226,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::U16(ref mut buf) => DecodingBuffer::U16(&mut buf[range]),
             DecodingBuffer::U32(ref mut buf) => DecodingBuffer::U32(&mut buf[range]),
             DecodingBuffer::U64(ref mut buf) => DecodingBuffer::U64(&mut buf[range]),
+            DecodingBuffer::F16(ref mut buf) => DecodingBuffer::F16(&mut buf[range]),
             DecodingBuffer::F32(ref mut buf) => DecodingBuffer::F32(&mut buf[range]),
             DecodingBuffer::F64(ref mut buf) => DecodingBuffer::F64(&mut buf[range]),
             DecodingBuffer::I8(ref mut buf) => DecodingBuffer::I8(&mut buf[range]),
@@ -229,6 +246,7 @@ impl<'a> DecodingBuffer<'a> {
             DecodingBuffer::I32(buf) => bytecast::i32_as_ne_mut_bytes(buf),
             DecodingBuffer::U64(buf) => bytecast::u64_as_ne_mut_bytes(buf),
             DecodingBuffer::I64(buf) => bytecast::i64_as_ne_mut_bytes(buf),
+            DecodingBuffer::F16(buf) => bytecast::f16_as_ne_mut_bytes(buf),
             DecodingBuffer::F32(buf) => bytecast::f32_as_ne_mut_bytes(buf),
             DecodingBuffer::F64(buf) => bytecast::f64_as_ne_mut_bytes(buf),
         }
@@ -366,6 +384,17 @@ fn rev_hpredict_nsamp<T: Copy + Wrapping>(image: &mut [T], samples: usize) {
     }
 }
 
+pub fn fp_predict_f16(input: &mut [u8], output: &mut [f16], samples: usize) {
+    rev_hpredict_nsamp(input, samples);
+    for i in 0..output.len() {
+        // TODO: use f16::from_be_bytes() when we can (version 1.40)
+
+        print!("*");
+        // output[i] = f16::from_be_bytes([input[i], input[i + 1]]);
+        output[i] = f16::from_bits(u16::from_be_bytes([input[i], input[input.len() / 2 + i]]));
+    }
+}
+
 pub fn fp_predict_f32(input: &mut [u8], output: &mut [f32], samples: usize) {
     rev_hpredict_nsamp(input, samples);
     for i in 0..output.len() {
@@ -402,6 +431,8 @@ fn fix_endianness_and_predict(
     byte_order: ByteOrder,
     predictor: Predictor,
 ) {
+    // print!("Predictor: {predictor:?}");  => Predictor::None
+    // print!("Byte order: {byte_order:?} "); => LE
     match predictor {
         Predictor::None => {
             fix_endianness(&mut image, byte_order);
@@ -417,7 +448,7 @@ fn fix_endianness_and_predict(
                 DecodingBuffer::I16(buf) => rev_hpredict_nsamp(buf, samples),
                 DecodingBuffer::I32(buf) => rev_hpredict_nsamp(buf, samples),
                 DecodingBuffer::I64(buf) => rev_hpredict_nsamp(buf, samples),
-                DecodingBuffer::F32(_) | DecodingBuffer::F64(_) => {
+                DecodingBuffer::F16(_) | DecodingBuffer::F32(_) | DecodingBuffer::F64(_) => {
                     unreachable!("Caller should have validated arguments. Please file a bug.")
                 }
             }
@@ -425,6 +456,7 @@ fn fix_endianness_and_predict(
         Predictor::FloatingPoint => {
             let mut buffer_copy = image.as_bytes_mut().to_vec();
             match image {
+                DecodingBuffer::F16(buf) => fp_predict_f16(&mut buffer_copy, buf, samples),
                 DecodingBuffer::F32(buf) => fp_predict_f32(&mut buffer_copy, buf, samples),
                 DecodingBuffer::F64(buf) => fp_predict_f64(&mut buffer_copy, buf, samples),
                 _ => unreachable!("Caller should have validated arguments. Please file a bug."),
@@ -466,6 +498,9 @@ fn invert_colors(buf: &mut DecodingBuffer, color_type: ColorType) {
         (ColorType::Gray(n), DecodingBuffer::U8(ref mut buffer)) if n <= 8 => {
             invert_colors_unsigned(buffer, 0xff);
         }
+        (ColorType::Gray(16), DecodingBuffer::F16(ref mut buffer)) => {
+            invert_colors_fp(buffer, f16::from_f32(1.0));
+        }
         (ColorType::Gray(32), DecodingBuffer::F32(ref mut buffer)) => {
             invert_colors_fp(buffer, 1.0);
         }
@@ -487,6 +522,9 @@ fn fix_endianness(buf: &mut DecodingBuffer, byte_order: ByteOrder) {
             DecodingBuffer::I32(b) => b.iter_mut().for_each(|v| *v = i32::from_le(*v)),
             DecodingBuffer::U64(b) => b.iter_mut().for_each(|v| *v = u64::from_le(*v)),
             DecodingBuffer::I64(b) => b.iter_mut().for_each(|v| *v = i64::from_le(*v)),
+            DecodingBuffer::F16(b) => b
+                .iter_mut()
+                .for_each(|v| *v = f16::from_bits(u16::from_le(v.to_bits()))),
             DecodingBuffer::F32(b) => b
                 .iter_mut()
                 .for_each(|v| *v = f32::from_bits(u32::from_le(v.to_bits()))),
@@ -502,6 +540,9 @@ fn fix_endianness(buf: &mut DecodingBuffer, byte_order: ByteOrder) {
             DecodingBuffer::I32(b) => b.iter_mut().for_each(|v| *v = i32::from_be(*v)),
             DecodingBuffer::U64(b) => b.iter_mut().for_each(|v| *v = u64::from_be(*v)),
             DecodingBuffer::I64(b) => b.iter_mut().for_each(|v| *v = i64::from_be(*v)),
+            DecodingBuffer::F16(b) => b
+                .iter_mut()
+                .for_each(|v| *v = f16::from_bits(u16::from_be(v.to_bits()))),
             DecodingBuffer::F32(b) => b
                 .iter_mut()
                 .for_each(|v| *v = f32::from_bits(u32::from_be(v.to_bits()))),
@@ -730,6 +771,12 @@ impl<R: Read + Seek> Decoder<R> {
     #[inline]
     pub fn read_slong(&mut self) -> Result<i32, io::Error> {
         self.reader.read_i32()
+    }
+
+    /// Reads a TIFF half value
+    #[inline]
+    pub fn read_half(&mut self) -> Result<f16, io::Error> {
+        self.reader.read_f16()
     }
 
     /// Reads a TIFF float value
@@ -1087,6 +1134,7 @@ impl<R: Read + Seek> Decoder<R> {
                 )),
             },
             SampleFormat::IEEEFP => match max_sample_bits {
+                16 => DecodingResult::new_f16(buffer_size, &self.limits),
                 32 => DecodingResult::new_f32(buffer_size, &self.limits),
                 64 => DecodingResult::new_f64(buffer_size, &self.limits),
                 n => Err(TiffError::UnsupportedError(
@@ -1166,6 +1214,13 @@ impl<R: Read + Seek> Decoder<R> {
         // Possible improvements:
         // * pass requested band as parameter
         // * collect bands to a RGB encoding result in case of RGB bands
+
+        // REMOVE
+        // println!("{:?}", self.image());
+        // println!("!! width: {}", width);
+        // println!("!! height: {}", height);
+        // println!("!! now decoding {} image chunks", image_chunks);
+
         for chunk in 0..image_chunks {
             self.goto_offset_u64(self.image().chunk_offsets[chunk])?;
 
@@ -1173,6 +1228,13 @@ impl<R: Read + Seek> Decoder<R> {
             let y = chunk / chunks_across;
             let buffer_offset = y * strip_samples + x * chunk_dimensions.0 as usize * samples;
             let byte_order = self.reader.byte_order;
+
+            // REMOVE
+            // println!("!!= decoding image chunk: #{}", chunk);
+            // println!("!!= position_xy: {}, {}", x, y);
+            // println!("!!= buffer_offset: {}", buffer_offset);
+            // println!("!!= byte_order: {:?}", byte_order);
+
             self.image.expand_chunk(
                 &mut self.reader,
                 result.as_buffer(buffer_offset).copy(),

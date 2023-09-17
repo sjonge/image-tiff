@@ -1,5 +1,6 @@
 //! All IO functionality needed for TIFF decoding
 
+use half::f16;
 use std::convert::TryFrom;
 use std::io::{self, BufRead, BufReader, Read, Seek, Take};
 
@@ -92,6 +93,17 @@ pub trait EndianReader: Read {
             ByteOrder::LittleEndian => i64::from_le_bytes(n),
             ByteOrder::BigEndian => i64::from_be_bytes(n),
         })
+    }
+
+    /// Reads an f16
+    #[inline(always)]
+    fn read_f16(&mut self) -> Result<f16, io::Error> {
+        let mut n = [0u8; 2];
+        self.read_exact(&mut n)?;
+        Ok(f16::from_bits(match self.byte_order() {
+            ByteOrder::LittleEndian => u16::from_le_bytes(n),
+            ByteOrder::BigEndian => u16::from_be_bytes(n),
+        }))
     }
 
     /// Reads an f32

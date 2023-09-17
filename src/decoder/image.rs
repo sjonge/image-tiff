@@ -1,7 +1,7 @@
 use super::ifd::{Directory, Value};
 use super::stream::{ByteOrder, DeflateReader, LZWReader, PackBitsReader};
 use super::tag_reader::TagReader;
-use super::{fp_predict_f32, fp_predict_f64, DecodingBuffer, Limits};
+use super::{fp_predict_f16, fp_predict_f32, fp_predict_f64, DecodingBuffer, Limits};
 use super::{stream::SmartReader, ChunkType};
 use crate::tags::{
     CompressionMethod, PhotometricInterpretation, PlanarConfiguration, Predictor, SampleFormat, Tag,
@@ -567,13 +567,15 @@ impl Image {
 
         // Validate that the predictor is supported for the sample type.
         match (self.predictor, &buffer) {
-            (Predictor::Horizontal, DecodingBuffer::F32(_))
+            (Predictor::Horizontal, DecodingBuffer::F16(_))
+            | (Predictor::Horizontal, DecodingBuffer::F32(_))
             | (Predictor::Horizontal, DecodingBuffer::F64(_)) => {
                 return Err(TiffError::UnsupportedError(
                     TiffUnsupportedError::HorizontalPredictor(color_type),
                 ));
             }
-            (Predictor::FloatingPoint, DecodingBuffer::F32(_))
+            (Predictor::FloatingPoint, DecodingBuffer::F16(_))
+            | (Predictor::FloatingPoint, DecodingBuffer::F32(_))
             | (Predictor::FloatingPoint, DecodingBuffer::F64(_)) => {}
             (Predictor::FloatingPoint, _) => {
                 return Err(TiffError::UnsupportedError(
@@ -637,6 +639,7 @@ impl Image {
 
                 reader.read_exact(&mut encoded)?;
                 match buffer.subrange(row_start..row_end) {
+                    DecodingBuffer::F16(buf) => fp_predict_f16(&mut encoded, buf, samples),
                     DecodingBuffer::F32(buf) => fp_predict_f32(&mut encoded, buf, samples),
                     DecodingBuffer::F64(buf) => fp_predict_f64(&mut encoded, buf, samples),
                     _ => unreachable!(),
@@ -649,6 +652,13 @@ impl Image {
             for row in 0..data_dims.1 as usize {
                 let row_start = row * output_width * samples;
                 let row_end = row_start + data_dims.0 as usize * samples;
+
+                // REMOVE
+                // println!("-- data_dims: {data_dims:?}");
+                // println!("-- samples: {samples:?}");
+                // println!("-- row_start: {row_start:?}");
+                // println!("-- row_end: {row_end:?}");
+                // println!("-- byte_len: {byte_len:?}");
 
                 let row = &mut buffer.as_bytes_mut()[(row_start * byte_len)..(row_end * byte_len)];
                 reader.read_exact(row)?;
