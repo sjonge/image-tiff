@@ -5,6 +5,9 @@
 
 TIFF decoding and encoding library in pure Rust
 
+## Fork
+This is a fork that adds support for half floating point (f16).
+
 ## Supported
 
 ### Features
@@ -16,16 +19,16 @@ TIFF decoding and encoding library in pure Rust
 ### Formats
 This table lists photometric interpretations and sample formats which are supported for encoding and decoding. The entries are `ColorType` variants for which sample bit depths are supported. Only samples where all bit depths are equal are currently supported. For example, `RGB(8)` means that the bit depth [8, 8, 8] is supported and will be interpreted as an 8 bit per channel RGB color type.
 
-| `PhotometricInterpretation` | UINT Format                             | IEEEFP Format             |
-| --------------------------- | --------------------------------------- | ------------------------- |
-| `WhiteIsZero`               | Gray(8\|16\|32\|64)                     | Gray(32\|64)              |
-| `BlackIsZero`               | Gray(8\|16\|32\|64)                     | Gray(32\|64)              |
-| `RGB`                       | RGB(8\|16\|32\|64), RGBA(8\|16\|32\|64) | RGB(32\|64), RGBA(32\|64) |
-| `RGBPalette`                |                                         |                           |
-| `Mask`                      |                                         |                           |
-| `CMYK`                      | CMYK(8\|16\|32\|64)                     | CMYK(32\|64)              |
-| `YCbCr`                     |                                         |                           |
-| `CIELab`                    |                                         |                           |
+| `PhotometricInterpretation` | UINT Format                             | IEEEFP Format                     |
+| --------------------------- | --------------------------------------- | --------------------------------- |
+| `WhiteIsZero`               | Gray(8\|16\|32\|64)                     | Gray(16\|32\|64)                  |
+| `BlackIsZero`               | Gray(8\|16\|32\|64)                     | Gray(16\|32\|64)                  |
+| `RGB`                       | RGB(8\|16\|32\|64), RGBA(8\|16\|32\|64) | RGB(16\|32\|64), RGBA(16\|32\|64) |
+| `RGBPalette`                |                                         |                                   |
+| `Mask`                      |                                         |                                   |
+| `CMYK`                      | CMYK(8\|16\|32\|64)                     | CMYK(16\|32\|64)                  |
+| `YCbCr`                     |                                         |                                   |
+| `CIELab`                    |                                         |                                   |
 
 ### Compressions
 
